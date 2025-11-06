@@ -1,3 +1,5 @@
+#!/bin/bash
+
 cd MVT
 python tracking/train_depth.py \
     --script mobilevit_track_depth \
