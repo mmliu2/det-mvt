@@ -2,7 +2,8 @@
 
 # create local file before running experiments
 
-python3 MVT/tracking/create_default_local_file.py \
+cd MVT
+python3 tracking/create_default_local_file.py \
     --workspace_dir . \
-    --data_dir ./../data \
-    --save_dir ./../output
+    --data_dir ../data \
+    --save_dir ../output

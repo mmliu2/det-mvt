@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # download mobilevit_s
+# not needed, since we are using pretrained mvt
 
-wget -qnc https://docs-assets.developer.apple.com/ml-research/models/cvnets/classification/mobilevit_s.pt -O MVT/pretrained_models/mobilevit_s.pt
+# wget -qnc https://docs-assets.developer.apple.com/ml-research/models/cvnets/classification/mobilevit_s.pt -O MVT/pretrained_models/mobilevit_s.pt
 
 # download MVT checkpoints from google drive
 

@@ -241,6 +241,17 @@ def get_files(mini=False):
         test_files = '''
             adapter01_indoor
             '''.strip().split()
+        
+
+    train_files = '''
+        toy07_indoor_320
+        '''.strip().split()
+
+    val_files = '''   
+        '''.strip().split()
+
+    test_files = '''
+        '''.strip().split()
     
     return train_files, val_files, test_files
 
