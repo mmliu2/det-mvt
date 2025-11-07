@@ -10,10 +10,10 @@ from typing import Dict, Tuple, Optional
 from .cvnets_utils import logger
 
 # from . import register_cls_models
-from .config.mobilevit import get_configuration
+from .config.mobilevit_depth import get_configuration
 from .layers import ConvLayer
 from .modules import InvertedResidual, MobileViT_Track_Depth_Block
-from .base_backbone import BaseEncoder
+from .base_backbone_depth import BaseEncoder
 
 
 # @register_cls_models("mobilevit")
@@ -45,7 +45,7 @@ class MobileViTDepth(BaseEncoder):
             use_norm=True,
             use_act=True,
         )
-        self.conv_1_depth = ConvLayer(
+        self.conv_1_prompt = ConvLayer(
             opts=opts,
             in_channels=image_channels,
             out_channels=out_channels,
@@ -63,7 +63,7 @@ class MobileViTDepth(BaseEncoder):
         self.layer_1, out_channels = self._make_layer(
             opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer1"]
         )
-        self.layer_1_depth, out_channels = self._make_layer(
+        self.layer_1_prompt, out_channels = self._make_layer(
             opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer1"]
         )
         self.model_conf_dict["layer1"] = {"in": in_channels, "out": out_channels}
@@ -71,41 +71,26 @@ class MobileViTDepth(BaseEncoder):
         # layer_2 (i.e., MobileNetV2 with down-sampling + 2 x MobileNetV2) output FROZEN
         # layer_2_depth (i.e., MobileNetV2 with down-sampling + 2 x MobileNetV2) output
         in_channels = out_channels
-        self.layer_2_depth, _ = self._make_layer(
+        self.layer_2, out_channels = self._make_layer(
             opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer2"]
         )
-        self.layer_2, out_channels = self._make_layer(
+        self.layer_2_prompt, out_channels = self._make_layer(
             opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer2"]
         )
         self.model_conf_dict["layer2"] = {"in": in_channels, "out": out_channels}
 
-        # depth tokens to input to layer_3
-        self.prompt_3_depth, _ = self._make_layer(
-            opts=opts, input_channel=in_channels, cfg=mobilevit_config["prompt3"]
-        )
-
         # layer_3 (i.e., MobileNetV2 with down-sampling + 2 x MobileViT-Track block) output
         # layer_3_depth (i.e., MobileNetV2 with down-sampling + 2 x MobileViT-Track block) output
         in_channels = out_channels
-        self.layer_3_depth, _ = self._make_layer(
-            opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer3"]
-        )
-        self.layer_3, out_channels = self._make_layer(
-            opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer3"]
+        self.layer_3_vipt, out_channels = self._make_layer(
+            opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer3_vipt"]
         )
         self.model_conf_dict["layer3"] = {"in": in_channels, "out": out_channels}
-        
-        # depth tokens to input to layer_3
-        self.prompt_4_depth, _ = self._make_layer(
-            opts=opts, input_channel=in_channels, cfg=mobilevit_config["prompt4"]
-        )
 
         # layer_4 (i.e., MobileNetV2 with down-sampling + 4 x MobileViT-Track block) output
         in_channels = out_channels
-        self.layer_4, out_channels = self._make_layer(
-            opts=opts,
-            input_channel=in_channels,
-            cfg=mobilevit_config["layer4"],
+        self.layer_4_vipt, out_channels = self._make_layer(
+            opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer4_vipt"],
             dilate=False,
         )
         self.model_conf_dict["layer4"] = {"in": in_channels, "out": out_channels}

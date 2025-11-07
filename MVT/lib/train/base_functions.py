@@ -25,6 +25,8 @@ def update_settings(settings, cfg):
 
     settings.device = cfg.TRAIN.DEVICE
 
+    settings.freeze = cfg.TRAIN.FREEZE
+
 
 def names2datasets(name_list: list, settings, image_loader):
     assert isinstance(name_list, list)
