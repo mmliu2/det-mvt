@@ -242,17 +242,6 @@ def get_files(mini=False):
             adapter01_indoor
             '''.strip().split()
         
-
-    train_files = '''
-        toy07_indoor_320
-        '''.strip().split()
-
-    val_files = '''   
-        '''.strip().split()
-
-    test_files = '''
-        '''.strip().split()
-    
     return train_files, val_files, test_files
 
 
@@ -347,10 +336,15 @@ if __name__ == "__main__":
         type=str,
         help="Path to the dataset directory"
     )
+    parser.add_argument(
+        "--mini",
+        action='store_true',
+        help="Path to the dataset directory"
+    )
 
     args = parser.parse_args()
     data_dir = args.data_dir
-    mini = False
+    mini = args.mini
 
     assert os.path.isdir(data_dir)
     print('data_dir: ', data_dir)

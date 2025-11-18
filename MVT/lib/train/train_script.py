@@ -86,6 +86,7 @@ def run(settings):
     # TODO_CHECKPOINT loading mvt checkpoint
     missing, unexpected = net.load_state_dict(state_dict, strict=False)
 
+<<<<<<< HEAD
     # TODO_FREEZE unfreeze params with 'dte'
     for name, param in net.named_parameters():
         if 'dte' in name:
@@ -94,6 +95,14 @@ def run(settings):
         else:
             param.requires_grad = False
             # print('  frozen params:', name)
+=======
+    if settings.freeze:
+        for name, param in net.named_parameters():
+            if 'prompt' in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = False
+>>>>>>> 049cb172bfda5be06fcd9bddd417aa39ce26eca4
 
     print()
     # Total number of parameters

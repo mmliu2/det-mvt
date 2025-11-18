@@ -228,3 +228,6 @@ output/temp_folder
 
 tensorboard/*
 MVT/tensorboard/*
+
+MVT/lib/test/evaluation/local.py
+MVT/lib/train/admin/local.py
