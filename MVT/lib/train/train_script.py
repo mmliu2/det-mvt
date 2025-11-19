@@ -88,8 +88,8 @@ def run(settings):
 
     # TODO_FREEZE unfreeze params with 'dte'
     for name, param in net.named_parameters(): # TODO_FREEZE
-        if 'dte' in name:
-        # if 'dte' in name or 'head' in name or 'neck' in name:
+        # if 'dte' in name:
+        if 'dte' in name or 'head' in name or 'neck' in name:
             param.requires_grad = True
             # print('learnable params:', name)
         else:
