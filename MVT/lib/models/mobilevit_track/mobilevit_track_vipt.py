@@ -46,9 +46,10 @@ class MobileViT_Track_ViPT(nn.Module):
             self.box_head = _get_clones(self.box_head, 6)
 
     # def forward(self, template: torch.Tensor, search: torch.Tensor):
-    def forward(self, template: torch.Tensor, search: torch.Tensor, template_dte: torch.Tensor, search_dte: torch.Tensor):
+    def forward(self, template: torch.Tensor, search: torch.Tensor, 
+                    template_dte: torch.Tensor, search_dte: torch.Tensor, train=True):
         # x, z = self.backbone(x=search, z=template)
-        x, z = self.backbone(x=search, z=template, x_dte=search_dte, z_dte=template_dte)
+        x, z = self.backbone(x=search, z=template, x_dte=search_dte, z_dte=template_dte, train=train)
 
         # Forward neck
         x, z = self.neck(x, z)
@@ -157,11 +158,11 @@ def build_mobilevit_track_vipt(cfg, training=False): # training=True):
 
     if cfg.MODEL.BACKBONE.TYPE == 'mobilevit_s':
         backbone = create_mobilevitvipt_backbone(pretrained, training=training)
-        hidden_dim = backbone.model_conf_dict['layer4']['out']
+        hidden_dim = backbone.model_conf_dict['layer4_vipt']['out']
         patch_start_index = 1
     elif cfg.MODEL.BACKBONE.TYPE == 'mobilevit_xs':
         backbone = create_mobilevitvipt_backbone(pretrained, training=training)
-        hidden_dim = backbone.model_conf_dict['layer4']['out']
+        hidden_dim = backbone.model_conf_dict['layer4_vipt']['out']
         patch_start_index = 1
     else:
         raise NotImplementedError

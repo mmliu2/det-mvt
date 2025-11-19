@@ -187,7 +187,7 @@ def get_configuration(opts) -> Dict:
                 "mv_expand_ratio": mv2_exp_mult,
                 "head_dim": head_dim,
                 "num_heads": num_heads,
-                "block_type": "mobilevit",
+                "block_type": "mobilevitvipt",
             },
             "layer5": {  # 7x7
                 "out_channels": 160,

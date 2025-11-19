@@ -10,6 +10,7 @@ import torch
 from torch.nn import functional as F
 from typing import Optional, Dict, Tuple, Union, Sequence
 from .mobilevit_vipt_block import MobileViTViPTBlock, MobileViTBlockv2
+from .transformer_vipt import TransformerEncoderPrompt
 
 class MobileViT_Track_ViPT_Block(MobileViTViPTBlock):
     """
@@ -62,42 +63,71 @@ class MobileViT_Track_ViPT_Block(MobileViTViPTBlock):
 
         res_x = x
         res_z = z
+        res_x_dte = x_dte
+        res_z_dte = z_dte
 
         fm_x = self.local_rep(x)
         fm_z = self.local_rep(z)
-        fm_x_dte = self.local_rep(x_dte) #
-        fm_z_dte = self.local_rep(z_dte) #
-
-        fm_x = self.dte_prompt_block(fm_x, fm_x_dte) # 
-        fm_z = self.dte_prompt_block(fm_z, fm_z_dte) #
+        fm_x_dte = self.local_rep_dte(x_dte) # embed prompt
+        fm_z_dte = self.local_rep_dte(z_dte)
 
         # convert feature map to patches
-        patches_x, info_dict_x = self.unfolding(fm_x)
+        patches_x, info_dict_x = self.unfolding(fm_x) # feature to token
         patches_z, info_dict_z = self.unfolding(fm_z)
+        patches_x_dte, info_dict_x_dte = self.unfolding(fm_x_dte)
+        patches_z_dte, info_dict_z_dte = self.unfolding(fm_z_dte)
+
+        # patches_x = patches_x + patches_x_dte
+        # patches_z = patches_z + patches_z_dte
+
+        info_dicts = {'x': info_dict_x, 'z': info_dict_z, 'x_dte': info_dict_x_dte, 'z_dte': info_dict_z_dte}
 
         # concatenate search (i.e., x) and template (i.e., z) feature patches
         concatenated_patches = torch.cat((patches_x, patches_z), 1)
+        concatenated_patches_prompt = torch.cat((patches_x_dte, patches_z_dte), 1)
 
         # learn global representations
         for transformer_layer in self.global_rep:
-            concatenated_patches = transformer_layer(concatenated_patches)
 
+            if type(transformer_layer) is TransformerEncoderPrompt:
+                concatenated_patches, concatenated_patches_prompt, info_dicts = transformer_layer(concatenated_patches, concatenated_patches_prompt,
+                                                self.folding, self.unfolding, info_dicts)
+            else: # normalize
+                concatenated_patches, concatenated_patches_prompt = transformer_layer[0](concatenated_patches), transformer_layer[1](concatenated_patches_prompt)
+
+        info_dict_x = info_dicts['x']
+        info_dict_z = info_dicts['z']
+        
+        assert fm_x.shape == fm_x_dte.shape
+        assert fm_z.shape == fm_z_dte.shape
+        
         # split search (i.e., x) and template (i.e., z) feature patches
-        patches_x = concatenated_patches[:, 0:info_dict_x['total_patches'], :]
-        patches_z = concatenated_patches[:, info_dict_x['total_patches']:, :]
+        patches_x = concatenated_patches[:, 0:info_dicts['x']['total_patches'], :]
+        patches_z = concatenated_patches[:, info_dicts['x']['total_patches']:, :]
+        patches_x_dte = concatenated_patches[:, 0:info_dicts['x_dte']['total_patches'], :]
+        patches_z_dte = concatenated_patches[:, info_dicts['x_dte']['total_patches']:, :]
 
         # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
-        fm_x = self.folding(patches=patches_x, info_dict=info_dict_x)
-        fm_z = self.folding(patches=patches_z, info_dict=info_dict_z)
+        fm_x = self.folding(patches=patches_x, info_dict=info_dicts['x'])
+        fm_z = self.folding(patches=patches_z, info_dict=info_dicts['z'])
+        fm_x_dte = self.folding(patches=patches_x_dte, info_dict=info_dicts['x_dte'])
+        fm_z_dte = self.folding(patches=patches_z_dte, info_dict=info_dicts['z_dte'])
 
         fm_x = self.conv_proj(fm_x)
         fm_z = self.conv_proj(fm_z)
+        fm_x_dte = self.conv_proj_dte(fm_x_dte)
+        fm_z_dte = self.conv_proj_dte(fm_z_dte)
 
         if self.fusion is not None:
             fm_x = self.fusion(torch.cat((res_x, fm_x), dim=1))
             fm_z = self.fusion(torch.cat((res_z, fm_z), dim=1))
+            fm_x_dte = self.fusion_dte(torch.cat((res_x_dte, fm_x_dte), dim=1))
+            fm_z_dte = self.fusion_dte(torch.cat((res_z_dte, fm_z_dte), dim=1))
 
-        return fm_x, fm_z
+        assert fm_x.shape == fm_x_dte.shape
+        assert fm_z.shape == fm_z_dte.shape
+
+        return fm_x, fm_z, fm_x_dte, fm_z_dte
 
 class MobileViTv2_Track_Block(MobileViTBlockv2):
     """
@@ -126,43 +156,43 @@ class MobileViTv2_Track_Block(MobileViTBlockv2):
         super().__init__(opts, in_channels, attn_unit_dim, ffn_multiplier, n_attn_blocks, attn_dropout, dropout,
                                  ffn_dropout, patch_h, patch_w, conv_ksize, dilation, attn_norm_layer, *args, **kwargs)
 
-    def forward_spatial(self, x: Tensor, z: Tensor) -> Tensor:
+#     def forward_spatial(self, x: Tensor, z: Tensor) -> Tensor:
 
-        fm_x = self.local_rep(x)
-        fm_z = self.local_rep(z)
+#         fm_x = self.local_rep(x)
+#         fm_z = self.local_rep(z)
 
-        # convert feature map to patches
-        if self.enable_coreml_compatible_fn:
-            patches_x, output_size_x = self.unfolding_coreml(fm_x)
-            patches_z, output_size_z = self.unfolding_coreml(fm_z)
-        else:
-            patches_x, output_size_x = self.unfolding_pytorch(fm_x)
-            patches_z, output_size_z = self.unfolding_pytorch(fm_z)
+#         # convert feature map to patches
+#         if self.enable_coreml_compatible_fn:
+#             patches_x, output_size_x = self.unfolding_coreml(fm_x)
+#             patches_z, output_size_z = self.unfolding_coreml(fm_z)
+#         else:
+#             patches_x, output_size_x = self.unfolding_pytorch(fm_x)
+#             patches_z, output_size_z = self.unfolding_pytorch(fm_z)
 
-        # concatenate search (i.e., x) and template (i.e., z) feature patches
-        concatenated_patches = torch.cat((patches_x, patches_z), 3)
+#         # concatenate search (i.e., x) and template (i.e., z) feature patches
+#         concatenated_patches = torch.cat((patches_x, patches_z), 3)
 
-        # learn global representations
-        for transformer_layer in self.global_rep:
-            concatenated_patches = transformer_layer(concatenated_patches)
+#         # learn global representations
+#         for transformer_layer in self.global_rep:
+#             concatenated_patches = transformer_layer(concatenated_patches)
 
-        # split search (i.e., x) and template (i.e., z) feature patches
-        patches_x = concatenated_patches[:, :, :, 0:patches_x.size(3)]
-        patches_z = concatenated_patches[:, :, :, patches_x.size(3):]
+#         # split search (i.e., x) and template (i.e., z) feature patches
+#         patches_x = concatenated_patches[:, :, :, 0:patches_x.size(3)]
+#         patches_z = concatenated_patches[:, :, :, patches_x.size(3):]
 
-        # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
-        if self.enable_coreml_compatible_fn:
-            fm_x = self.folding_coreml(patches=patches_x, output_size=output_size_x)
-            fm_z = self.folding_coreml(patches=patches_z, output_size=output_size_z)
-        else:
-            fm_x = self.folding_pytorch(patches=patches_x, output_size=output_size_x)
-            fm_z = self.folding_pytorch(patches=patches_z, output_size=output_size_z)
+#         # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
+#         if self.enable_coreml_compatible_fn:
+#             fm_x = self.folding_coreml(patches=patches_x, output_size=output_size_x)
+#             fm_z = self.folding_coreml(patches=patches_z, output_size=output_size_z)
+#         else:
+#             fm_x = self.folding_pytorch(patches=patches_x, output_size=output_size_x)
+#             fm_z = self.folding_pytorch(patches=patches_z, output_size=output_size_z)
 
-        fm_x = self.conv_proj(fm_x)
-        fm_z = self.conv_proj(fm_z)
+#         fm_x = self.conv_proj(fm_x)
+#         fm_z = self.conv_proj(fm_z)
 
-        return fm_x, fm_z
+#         return fm_x, fm_z
 
-    def forward(self, x: Tensor, z: Tensor):
+#     def forward(self, x: Tensor, z: Tensor):
 
-        return self.forward_spatial(x, z)
+#         return self.forward_spatial(x, z)

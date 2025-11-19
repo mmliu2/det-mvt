@@ -106,7 +106,7 @@ class MobileViTViPTTrackActor(BaseActor):
         pr = tp / (tp + fp)
         re = tp / (tp + fn)
         if (pr + re) == 0.0:
-            f1 = 0.0
+            f1 = torch.tensor(0.0, device=l1_loss.device)
         else:
             f1 = 2 * pr * re / (pr + re)
 

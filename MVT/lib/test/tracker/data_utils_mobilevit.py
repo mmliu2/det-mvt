@@ -3,7 +3,7 @@ import numpy as np
 from lib.utils.misc import NestedTensor
 
 
-class PreprocessorDepth(object):
+class PreprocessorDTE(object):
     def __init__(self, use_gpu=True):
         self.use_gpu = use_gpu
         if use_gpu:

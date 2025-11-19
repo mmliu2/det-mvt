@@ -100,7 +100,7 @@ class MobileViTTrack(BaseTracker):
             # merge the template and the search
             # run the transformer
             out_dict = self.network.forward(
-                template=self.z_dict1.to(self.device), search=x_dict.tensors.to(self.device))
+                template=self.z_dict1.to(self.device), search=x_dict.tensors.to(self.device), train=False) # eval
 
         # add hann windows
         pred_score_map = out_dict['score_map']

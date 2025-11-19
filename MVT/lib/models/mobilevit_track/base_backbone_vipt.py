@@ -25,7 +25,7 @@ class BaseEncoderViPT(nn.Module):
         self.layer_2 = None
         self.layer_2_dte = None
         self.layer_3_vipt = None
-        self.layer_4 = None
+        self.layer_4_vipt = None
 
         self.dilation = 1
 
@@ -71,45 +71,48 @@ class BaseEncoderViPT(nn.Module):
         # compute output for remaining Transformer blocks (i.e., MobileViT/MobileViT-v2)
         for i in range(1, num_blocks):
             block = layer[i]
-            x_dte, z_dte = block(x, z, x_dte, z_dte)
-            x, z = x + x_dte, z + z_dte
+            x, z, x_dte, z_dte = block(x, z, x_dte, z_dte) # MobileViT_Track_ViPT_Block
 
-        return x, z
+        return x, z, x_dte, z_dte
 
     def finetune_track(self, cfg, patch_start_index):
         print("Not Yet Implemented!")
         return None
 
-    def forward_features(self, x, z, x_dte, z_dte): # todo: 4 inputs. also which of x z is template search
+    def forward_features(self, x, z, x_dte, z_dte, train=True): # todo: 4 inputs. also which of x z is template search
 
         # conv_1 (i.e., the first conv3x3 layer) output for
         x = self._forward_conv_layer(self.conv_1, x)
-        z = self._forward_conv_layer(self.conv_1, z)
         x_dte = self._forward_conv_layer(self.conv_1_dte, x_dte)
-        z_dte = self._forward_conv_layer(self.conv_1_dte, z_dte)
+        if train:
+            z = self._forward_conv_layer(self.conv_1, z)
+            z_dte = self._forward_conv_layer(self.conv_1_dte, z_dte)
 
         # layer_1 (i.e., MobileNetV2 block) output
         x = self._forward_conv_layer(self.layer_1, x)
-        z = self._forward_conv_layer(self.layer_1, z)
         x_dte = self._forward_conv_layer(self.layer_1_dte, x_dte)
-        z_dte = self._forward_conv_layer(self.layer_1_dte, z_dte)
+        if train:
+            z = self._forward_conv_layer(self.layer_1, z)
+            z_dte = self._forward_conv_layer(self.layer_1_dte, z_dte)
 
         # layer_2 (i.e., MobileNetV2 with down-sampling + 2 x MobileNetV2) output
         x = self._forward_conv_layer(self.layer_2, x)
-        z = self._forward_conv_layer(self.layer_2, z)
         x_dte = self._forward_conv_layer(self.layer_2_dte, x_dte)
-        z_dte = self._forward_conv_layer(self.layer_2_dte, z_dte)
+        if train:
+            z = self._forward_conv_layer(self.layer_2, z)
+            z_dte = self._forward_conv_layer(self.layer_2_dte, z_dte)
 
         # layer_3 (i.e., MobileNetV2 with down-sampling + 2 x MobileViT-Track block) output
         # x, z = self._forward_MobileViT_layer(self.layer_3, x, z)
-        x, z = self._forward_MobileViTViPT_layer(self.layer_3, x, z, x_dte, z_dte)
+        x, z, x_dte, z_dte = self._forward_MobileViTViPT_layer(self.layer_3, x, z, x_dte, z_dte)
 
         # layer_4 (i.e., MobileNetV2 with down-sampling + 4 x MobileViT-Track block) output
-        x, z = self._forward_MobileViT_layer(self.layer_4, x, z)
+        # x, z = self._forward_MobileViT_layer(self.layer_4, x, z)
+        x, z, _, _ = self._forward_MobileViTViPT_layer(self.layer_4, x, z, x_dte, z_dte)
 
         return x, z
 
-    def forward(self, x: Tensor, z: Tensor, x_dte: Tensor, z_dte: Tensor):
+    def forward(self, x: Tensor, z: Tensor, x_dte: Tensor, z_dte: Tensor, train=True):
 
         """
         Joint feature extraction and relation modeling for the MobileViT backbone.
@@ -121,7 +124,7 @@ class BaseEncoderViPT(nn.Module):
             x (torch.Tensor): merged template and search region feature, [B, L_x, C]
             attn : None
         """
-        x, z = self.forward_features(x, z, x_dte, z_dte)
+        x, z = self.forward_features(x, z, x_dte, z_dte, train=train)
 
         return x, z
 

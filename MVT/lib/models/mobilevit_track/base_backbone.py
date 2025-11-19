@@ -56,19 +56,22 @@ class BaseEncoder(nn.Module):
         print("Not Yet Implemented!")
         return None
 
-    def forward_features(self, x, z):
+    def forward_features(self, x, z, train=True):
 
         # conv_1 (i.e., the first conv3x3 layer) output for
         x = self._forward_conv_layer(self.conv_1, x)
-        z = self._forward_conv_layer(self.conv_1, z)
+        if train:
+            z = self._forward_conv_layer(self.conv_1, z)
 
         # layer_1 (i.e., MobileNetV2 block) output
         x = self._forward_conv_layer(self.layer_1, x)
-        z = self._forward_conv_layer(self.layer_1, z)
+        if train:
+            z = self._forward_conv_layer(self.layer_1, z)
 
         # layer_2 (i.e., MobileNetV2 with down-sampling + 2 x MobileNetV2) output
         x = self._forward_conv_layer(self.layer_2, x)
-        z = self._forward_conv_layer(self.layer_2, z)
+        if train:
+            z = self._forward_conv_layer(self.layer_2, z)
 
         # layer_3 (i.e., MobileNetV2 with down-sampling + 2 x MobileViT-Track block) output
         x, z = self._forward_MobileViT_layer(self.layer_3, x, z)
@@ -78,7 +81,7 @@ class BaseEncoder(nn.Module):
 
         return x, z
 
-    def forward(self, x: Tensor, z: Tensor):
+    def forward(self, x: Tensor, z: Tensor, train=True):
 
         """
         Joint feature extraction and relation modeling for the MobileViT backbone.
@@ -90,7 +93,7 @@ class BaseEncoder(nn.Module):
             x (torch.Tensor): merged template and search region feature, [B, L_x, C]
             attn : None
         """
-        x, z = self.forward_features(x, z,)
+        x, z = self.forward_features(x, z, train=train)
 
         return x, z
 

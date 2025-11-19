@@ -81,18 +81,16 @@ class MobileViTViPT(BaseEncoderViPT):
         # vipt
         in_channels = out_channels
         self.layer_3, out_channels = self._make_layer(
-            opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer3"]
+            opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer3"] # prompt
         )
         self.model_conf_dict["layer3_vipt"] = {"in": in_channels, "out": out_channels}
 
         in_channels = out_channels
         self.layer_4, out_channels = self._make_layer(
-            opts=opts,
-            input_channel=in_channels,
-            cfg=mobilevit_config["layer4"], # frozen
+            opts=opts, input_channel=in_channels, cfg=mobilevit_config["layer4"], # prompt
             dilate=False,
         )
-        self.model_conf_dict["layer4"] = {"in": in_channels, "out": out_channels}
+        self.model_conf_dict["layer4_vipt"] = {"in": in_channels, "out": out_channels}
 
         # check model
         # self.check_model()

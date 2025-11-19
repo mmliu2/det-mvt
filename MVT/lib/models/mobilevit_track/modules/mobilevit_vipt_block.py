@@ -10,72 +10,11 @@ import torch
 from torch.nn import functional as F
 from typing import Optional, Dict, Tuple, Union, Sequence
 
-from .transformer import TransformerEncoder, LinearAttnFFN
+# from .transformer import TransformerEncoder, LinearAttnFFN
+from .transformer_vipt import TransformerEncoderPrompt, LinearAttnFFN
 from .base_module import BaseModule
 from ..misc.profiler import module_profile
 from ..layers import ConvLayer, get_normalization_layer
-
-
-class Fovea(nn.Module):
-
-    def __init__(self, smooth=False):
-        super().__init__()
-
-        self.softmax = nn.Softmax(dim=-1)
-
-        self.smooth = smooth
-        if smooth:
-            self.smooth = nn.Parameter(torch.zeros(1) + 10.0)
-
-    def forward(self, x):
-        '''
-            x: [batch_size, features, k]
-        '''
-        b, c, h, w = x.shape
-        x = x.contiguous().view(b, c, h*w)
-
-        if self.smooth:
-            mask = self.softmax(x * self.smooth)
-        else:
-            mask = self.softmax(x)
-        output = mask * x
-        output = output.contiguous().view(b, c, h, w)
-
-        return output
-
-
-class Prompt_block(nn.Module, ):
-    def __init__(self, inplanes=None, hide_channel=None, smooth=False):
-        super(Prompt_block, self).__init__()
-        self.conv0_0 = nn.Conv2d(in_channels=inplanes, out_channels=hide_channel, kernel_size=1, stride=1, padding=0)
-        self.conv0_1 = nn.Conv2d(in_channels=inplanes, out_channels=hide_channel, kernel_size=1, stride=1, padding=0)
-        self.conv1x1 = nn.Conv2d(in_channels=hide_channel, out_channels=inplanes, kernel_size=1, stride=1, padding=0)
-        self.fovea = Fovea(smooth=smooth)
-
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-
-    # def forward(self, x):
-    #     """ Forward pass with input x. """
-    #     B, C, W, H = x.shape
-    #     x0 = x[:, 0:int(C/2), :, :].contiguous()
-    #     x0 = self.conv0_0(x0)
-    #     x1 = x[:, int(C/2):, :, :].contiguous()
-    #     x1 = self.conv0_1(x1)
-    #     x0 = self.fovea(x0) + x1
-
-    #     return self.conv1x1(x0)
-
-    def forward(self, x0, x1): # x, x_dte
-        """ Forward pass with input x. """
-        x0 = x0.contiguous()
-        x0 = self.conv0_0(x0)
-        x1 = x1.contiguous()
-        x1 = self.conv0_1(x1)
-        x0 = self.fovea(x0) + x1
-
-        return self.conv1x1(x0)
 
 
 class MobileViTViPTBlock(BaseModule):
@@ -140,6 +79,26 @@ class MobileViTViPTBlock(BaseModule):
             use_act=False,
         )
 
+        conv_3x3_in_dte = ConvLayer(
+            opts=opts,
+            in_channels=in_channels,
+            out_channels=in_channels,
+            kernel_size=conv_ksize,
+            stride=1,
+            use_norm=True,
+            use_act=True,
+            dilation=dilation,
+        )
+        conv_1x1_in_dte = ConvLayer(
+            opts=opts,
+            in_channels=in_channels,
+            out_channels=transformer_dim,
+            kernel_size=1,
+            stride=1,
+            use_norm=False,
+            use_act=False,
+        )
+
         conv_1x1_out = ConvLayer(
             opts=opts,
             in_channels=transformer_dim,
@@ -160,16 +119,42 @@ class MobileViTViPTBlock(BaseModule):
                 use_norm=True,
                 use_act=True,
             )
+
+        conv_1x1_out_dte = ConvLayer(
+            opts=opts,
+            in_channels=transformer_dim,
+            out_channels=in_channels,
+            kernel_size=1,
+            stride=1,
+            use_norm=True,
+            use_act=True,
+        )
+        conv_3x3_out_dte = None
+        if not no_fusion:
+            conv_3x3_out_dte = ConvLayer(
+                opts=opts,
+                in_channels=2 * in_channels,
+                out_channels=in_channels,
+                kernel_size=conv_ksize,
+                stride=1,
+                use_norm=True,
+                use_act=True,
+            )
+
         super().__init__()
         self.local_rep = nn.Sequential()
         self.local_rep.add_module(name="conv_3x3", module=conv_3x3_in)
         self.local_rep.add_module(name="conv_1x1", module=conv_1x1_in)
 
+        self.local_rep_dte = nn.Sequential()
+        self.local_rep_dte.add_module(name="conv_3x3_dte", module=conv_3x3_in_dte)
+        self.local_rep_dte.add_module(name="conv_1x1_dte", module=conv_1x1_in_dte)
+
         assert transformer_dim % head_dim == 0
         num_heads = transformer_dim // head_dim
 
         global_rep = [
-            TransformerEncoder(
+            TransformerEncoderPrompt(
                 opts=opts,
                 embed_dim=transformer_dim,
                 ffn_latent_dim=ffn_dim,
@@ -181,18 +166,30 @@ class MobileViTViPTBlock(BaseModule):
             )
             for _ in range(n_transformer_blocks)
         ]
+
+        self.global_rep_layer_norm = get_normalization_layer(
+                    opts=opts,
+                    norm_type=transformer_norm_layer,
+                    num_features=transformer_dim,
+                )
+        self.global_rep_layer_norm_dte = get_normalization_layer( # dte
+                    opts=opts,
+                    norm_type=transformer_norm_layer,
+                    num_features=transformer_dim, 
+                )
         global_rep.append(
-            get_normalization_layer(
-                opts=opts,
-                norm_type=transformer_norm_layer,
-                num_features=transformer_dim,
+            nn.Sequential(
+                self.global_rep_layer_norm,
+                self.global_rep_layer_norm_dte
             )
         )
         self.global_rep = nn.Sequential(*global_rep)
 
         self.conv_proj = conv_1x1_out
+        self.conv_proj_dte = conv_1x1_out_dte
 
         self.fusion = conv_3x3_out
+        self.fusion_dte = conv_3x3_out_dte
 
         self.patch_h = patch_h
         self.patch_w = patch_w
@@ -209,44 +206,41 @@ class MobileViTViPTBlock(BaseModule):
         self.n_blocks = n_transformer_blocks
         self.conv_ksize = conv_ksize
 
+    # def __repr__(self) -> str:
+    #     repr_str = "{}(".format(self.__class__.__name__)
 
-        self.dte_prompt_block = Prompt_block(inplanes=transformer_dim, hide_channel=8, smooth=True)
+    #     repr_str += "\n\t Local representations"
+    #     if isinstance(self.local_rep, nn.Sequential):
+    #         for m in self.local_rep:
+    #             repr_str += "\n\t\t {}".format(m)
+    #     else:
+    #         repr_str += "\n\t\t {}".format(self.local_rep)
 
-    def __repr__(self) -> str:
-        repr_str = "{}(".format(self.__class__.__name__)
+    #     repr_str += "\n\t Global representations with patch size of {}x{}".format(
+    #         self.patch_h, self.patch_w
+    #     )
+    #     if isinstance(self.global_rep, nn.Sequential):
+    #         for m in self.global_rep:
+    #             repr_str += "\n\t\t {}".format(m)
+    #     else:
+    #         repr_str += "\n\t\t {}".format(self.global_rep)
 
-        repr_str += "\n\t Local representations"
-        if isinstance(self.local_rep, nn.Sequential):
-            for m in self.local_rep:
-                repr_str += "\n\t\t {}".format(m)
-        else:
-            repr_str += "\n\t\t {}".format(self.local_rep)
+    #     if isinstance(self.conv_proj, nn.Sequential):
+    #         for m in self.conv_proj:
+    #             repr_str += "\n\t\t {}".format(m)
+    #     else:
+    #         repr_str += "\n\t\t {}".format(self.conv_proj)
 
-        repr_str += "\n\t Global representations with patch size of {}x{}".format(
-            self.patch_h, self.patch_w
-        )
-        if isinstance(self.global_rep, nn.Sequential):
-            for m in self.global_rep:
-                repr_str += "\n\t\t {}".format(m)
-        else:
-            repr_str += "\n\t\t {}".format(self.global_rep)
+    #     if self.fusion is not None:
+    #         repr_str += "\n\t Feature fusion"
+    #         if isinstance(self.fusion, nn.Sequential):
+    #             for m in self.fusion:
+    #                 repr_str += "\n\t\t {}".format(m)
+    #         else:
+    #             repr_str += "\n\t\t {}".format(self.fusion)
 
-        if isinstance(self.conv_proj, nn.Sequential):
-            for m in self.conv_proj:
-                repr_str += "\n\t\t {}".format(m)
-        else:
-            repr_str += "\n\t\t {}".format(self.conv_proj)
-
-        if self.fusion is not None:
-            repr_str += "\n\t Feature fusion"
-            if isinstance(self.fusion, nn.Sequential):
-                for m in self.fusion:
-                    repr_str += "\n\t\t {}".format(m)
-            else:
-                repr_str += "\n\t\t {}".format(self.fusion)
-
-        repr_str += "\n)"
-        return repr_str
+    #     repr_str += "\n)"
+    #     return repr_str
 
     def unfolding(self, feature_map: Tensor) -> Tuple[Tensor, Dict]:
         patch_w, patch_h = self.patch_w, self.patch_h
@@ -331,95 +325,96 @@ class MobileViTViPTBlock(BaseModule):
             )
         return feature_map
 
-    def forward_spatial(self, x: Tensor) -> Tensor:
-        res = x
+    # def forward_spatial(self, x: Tensor) -> Tensor:
+    #     res = x
 
-        fm = self.local_rep(x)
+    #     fm = self.local_rep(x)
 
-        # convert feature map to patches
-        patches, info_dict = self.unfolding(fm)
+    #     # convert feature map to patches
+    #     patches, info_dict = self.unfolding(fm)
 
-        # learn global representations
-        for transformer_layer in self.global_rep:
-            patches = transformer_layer(patches)
+    #     # learn global representations
+    #     for transformer_layer in self.global_rep:
+    #         patches = transformer_layer(patches)
 
-        # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
-        fm = self.folding(patches=patches, info_dict=info_dict)
+    #     # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
+    #     fm = self.folding(patches=patches, info_dict=info_dict)
 
-        fm = self.conv_proj(fm)
+    #     fm = self.conv_proj(fm)
 
-        if self.fusion is not None:
-            fm = self.fusion(torch.cat((res, fm), dim=1))
-        return fm
+    #     if self.fusion is not None:
+    #         fm = self.fusion(torch.cat((res, fm), dim=1))
+    #     return fm
 
-    def forward_temporal(
-        self, x: Tensor, x_prev: Optional[Tensor] = None
-    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+    # def forward_temporal(
+    #     self, x: Tensor, x_prev: Optional[Tensor] = None
+    # ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
 
-        res = x
-        fm = self.local_rep(x)
+    #     res = x
+    #     fm = self.local_rep(x)
 
-        # convert feature map to patches
-        patches, info_dict = self.unfolding(fm)
+    #     # convert feature map to patches
+    #     patches, info_dict = self.unfolding(fm)
 
-        # learn global representations
-        for global_layer in self.global_rep:
-            if isinstance(global_layer, TransformerEncoder):
-                patches = global_layer(x=patches, x_prev=x_prev)
-            else:
-                patches = global_layer(patches)
+    #     # learn global representations
+    #     for global_layer in self.global_rep:
+    #         if isinstance(global_layer, TransformerEncoder):
+    #             patches = global_layer(x=patches, x_prev=x_prev)
+    #         else:
+    #             patches = global_layer(patches)
 
-        # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
-        fm = self.folding(patches=patches, info_dict=info_dict)
+    #     # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
+    #     fm = self.folding(patches=patches, info_dict=info_dict)
 
-        fm = self.conv_proj(fm)
+    #     fm = self.conv_proj(fm)
 
-        if self.fusion is not None:
-            fm = self.fusion(torch.cat((res, fm), dim=1))
-        return fm, patches
+    #     if self.fusion is not None:
+    #         fm = self.fusion(torch.cat((res, fm), dim=1))
+    #     return fm, patches
 
-    def forward(
-        self, x: Union[Tensor, Tuple[Tensor]], *args, **kwargs
-    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-        if isinstance(x, Tuple) and len(x) == 2:
-            # for spatio-temporal MobileViT
-            return self.forward_temporal(x=x[0], x_prev=x[1])
-        elif isinstance(x, Tensor):
-            # For image data
-            return self.forward_spatial(x)
-        else:
-            raise NotImplementedError
+    # def forward(
+    #     self, x: Union[Tensor, Tuple[Tensor]], *args, **kwargs
+    # ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+    #     # if isinstance(x, Tuple) and len(x) == 2:
+    #     #     # for spatio-temporal MobileViT
+    #     #     return self.forward_temporal(x=x[0], x_prev=x[1])
+    #     # elif isinstance(x, Tensor):
+    #     #     # For image data
+    #     #     return self.forward_spatial(x)
+    #     # else:
+    #     #     raise NotImplementedError
+    #     return self.forward_spatial(x)
 
-    def profile_module(
-        self, input: Tensor, *args, **kwargs
-    ) -> Tuple[Tensor, float, float]:
-        params = macs = 0.0
+    # def profile_module(
+    #     self, input: Tensor, *args, **kwargs
+    # ) -> Tuple[Tensor, float, float]:
+    #     params = macs = 0.0
 
-        res = input
-        out, p, m = module_profile(module=self.local_rep, x=input)
-        params += p
-        macs += m
+    #     res = input
+    #     out, p, m = module_profile(module=self.local_rep, x=input)
+    #     params += p
+    #     macs += m
 
-        patches, info_dict = self.unfolding(feature_map=out)
+    #     patches, info_dict = self.unfolding(feature_map=out)
 
-        patches, p, m = module_profile(module=self.global_rep, x=patches)
-        params += p
-        macs += m
+    #     patches, p, m = module_profile(module=self.global_rep, x=patches)
+    #     params += p
+    #     macs += m
 
-        fm = self.folding(patches=patches, info_dict=info_dict)
+    #     fm = self.folding(patches=patches, info_dict=info_dict)
 
-        out, p, m = module_profile(module=self.conv_proj, x=fm)
-        params += p
-        macs += m
+    #     out, p, m = module_profile(module=self.conv_proj, x=fm)
+    #     params += p
+    #     macs += m
 
-        if self.fusion is not None:
-            out, p, m = module_profile(
-                module=self.fusion, x=torch.cat((out, res), dim=1)
-            )
-            params += p
-            macs += m
+    #     if self.fusion is not None:
+    #         out, p, m = module_profile(
+    #             module=self.fusion, x=torch.cat((out, res), dim=1)
+    #         )
+    #         params += p
+    #         macs += m
 
-        return res, params, macs
+    #     return res, params, macs
 
 
 class MobileViTBlockv2(BaseModule):
@@ -460,329 +455,329 @@ class MobileViTBlockv2(BaseModule):
         *args,
         **kwargs
     ) -> None:
-        cnn_out_dim = attn_unit_dim
+#         cnn_out_dim = attn_unit_dim
 
-        conv_3x3_in = ConvLayer(
-            opts=opts,
-            in_channels=in_channels,
-            out_channels=in_channels,
-            kernel_size=conv_ksize,
-            stride=1,
-            use_norm=True,
-            use_act=True,
-            dilation=dilation,
-            groups=in_channels,
-        )
-        conv_1x1_in = ConvLayer(
-            opts=opts,
-            in_channels=in_channels,
-            out_channels=cnn_out_dim,
-            kernel_size=1,
-            stride=1,
-            use_norm=False,
-            use_act=False,
-        )
+#         conv_3x3_in = ConvLayer(
+#             opts=opts,
+#             in_channels=in_channels,
+#             out_channels=in_channels,
+#             kernel_size=conv_ksize,
+#             stride=1,
+#             use_norm=True,
+#             use_act=True,
+#             dilation=dilation,
+#             groups=in_channels,
+#         )
+#         conv_1x1_in = ConvLayer(
+#             opts=opts,
+#             in_channels=in_channels,
+#             out_channels=cnn_out_dim,
+#             kernel_size=1,
+#             stride=1,
+#             use_norm=False,
+#             use_act=False,
+#         )
 
         super(MobileViTBlockv2, self).__init__()
-        self.local_rep = nn.Sequential(conv_3x3_in, conv_1x1_in)
+#         self.local_rep = nn.Sequential(conv_3x3_in, conv_1x1_in)
 
-        self.global_rep, attn_unit_dim = self._build_attn_layer(
-            opts=opts,
-            d_model=attn_unit_dim,
-            ffn_mult=ffn_multiplier,
-            n_layers=n_attn_blocks,
-            attn_dropout=attn_dropout,
-            dropout=dropout,
-            ffn_dropout=ffn_dropout,
-            attn_norm_layer=attn_norm_layer,
-        )
+#         self.global_rep, attn_unit_dim = self._build_attn_layer(
+#             opts=opts,
+#             d_model=attn_unit_dim,
+#             ffn_mult=ffn_multiplier,
+#             n_layers=n_attn_blocks,
+#             attn_dropout=attn_dropout,
+#             dropout=dropout,
+#             ffn_dropout=ffn_dropout,
+#             attn_norm_layer=attn_norm_layer,
+#         )
 
-        self.conv_proj = ConvLayer(
-            opts=opts,
-            in_channels=cnn_out_dim,
-            out_channels=in_channels,
-            kernel_size=1,
-            stride=1,
-            use_norm=True,
-            use_act=False,
-        )
+#         self.conv_proj = ConvLayer(
+#             opts=opts,
+#             in_channels=cnn_out_dim,
+#             out_channels=in_channels,
+#             kernel_size=1,
+#             stride=1,
+#             use_norm=True,
+#             use_act=False,
+#         )
 
-        self.patch_h = patch_h
-        self.patch_w = patch_w
-        self.patch_area = self.patch_w * self.patch_h
+#         self.patch_h = patch_h
+#         self.patch_w = patch_w
+#         self.patch_area = self.patch_w * self.patch_h
 
-        self.cnn_in_dim = in_channels
-        self.cnn_out_dim = cnn_out_dim
-        self.transformer_in_dim = attn_unit_dim
-        self.dropout = dropout
-        self.attn_dropout = attn_dropout
-        self.ffn_dropout = ffn_dropout
-        self.n_blocks = n_attn_blocks
-        self.conv_ksize = conv_ksize
-        self.enable_coreml_compatible_fn = getattr(
-            opts, "common.enable_coreml_compatible_module", False
-        )
+#         self.cnn_in_dim = in_channels
+#         self.cnn_out_dim = cnn_out_dim
+#         self.transformer_in_dim = attn_unit_dim
+#         self.dropout = dropout
+#         self.attn_dropout = attn_dropout
+#         self.ffn_dropout = ffn_dropout
+#         self.n_blocks = n_attn_blocks
+#         self.conv_ksize = conv_ksize
+#         self.enable_coreml_compatible_fn = getattr(
+#             opts, "common.enable_coreml_compatible_module", False
+#         )
 
-        if self.enable_coreml_compatible_fn:
-            # we set persistent to false so that these weights are not part of model's state_dict
-            self.register_buffer(
-                name="unfolding_weights",
-                tensor=self._compute_unfolding_weights(),
-                persistent=False,
-            )
+#         if self.enable_coreml_compatible_fn:
+#             # we set persistent to false so that these weights are not part of model's state_dict
+#             self.register_buffer(
+#                 name="unfolding_weights",
+#                 tensor=self._compute_unfolding_weights(),
+#                 persistent=False,
+#             )
 
-    def _compute_unfolding_weights(self) -> Tensor:
-        # [P_h * P_w, P_h * P_w]
-        weights = torch.eye(self.patch_h * self.patch_w, dtype=torch.float)
-        # [P_h * P_w, P_h * P_w] --> [P_h * P_w, 1, P_h, P_w]
-        weights = weights.reshape(
-            (self.patch_h * self.patch_w, 1, self.patch_h, self.patch_w)
-        )
-        # [P_h * P_w, 1, P_h, P_w] --> [P_h * P_w * C, 1, P_h, P_w]
-        weights = weights.repeat(self.cnn_out_dim, 1, 1, 1)
-        return weights
+#     def _compute_unfolding_weights(self) -> Tensor:
+#         # [P_h * P_w, P_h * P_w]
+#         weights = torch.eye(self.patch_h * self.patch_w, dtype=torch.float)
+#         # [P_h * P_w, P_h * P_w] --> [P_h * P_w, 1, P_h, P_w]
+#         weights = weights.reshape(
+#             (self.patch_h * self.patch_w, 1, self.patch_h, self.patch_w)
+#         )
+#         # [P_h * P_w, 1, P_h, P_w] --> [P_h * P_w * C, 1, P_h, P_w]
+#         weights = weights.repeat(self.cnn_out_dim, 1, 1, 1)
+#         return weights
 
-    def _build_attn_layer(
-        self,
-        opts,
-        d_model: int,
-        ffn_mult: Union[Sequence, int, float],
-        n_layers: int,
-        attn_dropout: float,
-        dropout: float,
-        ffn_dropout: float,
-        attn_norm_layer: str,
-        *args,
-        **kwargs
-    ) -> Tuple[nn.Module, int]:
+#     def _build_attn_layer(
+#         self,
+#         opts,
+#         d_model: int,
+#         ffn_mult: Union[Sequence, int, float],
+#         n_layers: int,
+#         attn_dropout: float,
+#         dropout: float,
+#         ffn_dropout: float,
+#         attn_norm_layer: str,
+#         *args,
+#         **kwargs
+#     ) -> Tuple[nn.Module, int]:
 
-        if isinstance(ffn_mult, Sequence) and len(ffn_mult) == 2:
-            ffn_dims = (
-                np.linspace(ffn_mult[0], ffn_mult[1], n_layers, dtype=float) * d_model
-            )
-        elif isinstance(ffn_mult, Sequence) and len(ffn_mult) == 1:
-            ffn_dims = [ffn_mult[0] * d_model] * n_layers
-        elif isinstance(ffn_mult, (int, float)):
-            ffn_dims = [ffn_mult * d_model] * n_layers
-        else:
-            raise NotImplementedError
+#         if isinstance(ffn_mult, Sequence) and len(ffn_mult) == 2:
+#             ffn_dims = (
+#                 np.linspace(ffn_mult[0], ffn_mult[1], n_layers, dtype=float) * d_model
+#             )
+#         elif isinstance(ffn_mult, Sequence) and len(ffn_mult) == 1:
+#             ffn_dims = [ffn_mult[0] * d_model] * n_layers
+#         elif isinstance(ffn_mult, (int, float)):
+#             ffn_dims = [ffn_mult * d_model] * n_layers
+#         else:
+#             raise NotImplementedError
 
-        # ensure that dims are multiple of 16
-        ffn_dims = [int((d // 16) * 16) for d in ffn_dims]
+#         # ensure that dims are multiple of 16
+#         ffn_dims = [int((d // 16) * 16) for d in ffn_dims]
 
-        global_rep = [
-            LinearAttnFFN(
-                opts=opts,
-                embed_dim=d_model,
-                ffn_latent_dim=ffn_dims[block_idx],
-                attn_dropout=attn_dropout,
-                dropout=dropout,
-                ffn_dropout=ffn_dropout,
-                norm_layer=attn_norm_layer,
-            )
-            for block_idx in range(n_layers)
-        ]
-        global_rep.append(
-            get_normalization_layer(
-                opts=opts, norm_type=attn_norm_layer, num_features=d_model
-            )
-        )
+#         global_rep = [
+#             LinearAttnFFN(
+#                 opts=opts,
+#                 embed_dim=d_model,
+#                 ffn_latent_dim=ffn_dims[block_idx],
+#                 attn_dropout=attn_dropout,
+#                 dropout=dropout,
+#                 ffn_dropout=ffn_dropout,
+#                 norm_layer=attn_norm_layer,
+#             )
+#             for block_idx in range(n_layers)
+#         ]
+#         global_rep.append(
+#             get_normalization_layer(
+#                 opts=opts, norm_type=attn_norm_layer, num_features=d_model
+#             )
+#         )
 
-        return nn.Sequential(*global_rep), d_model
+#         return nn.Sequential(*global_rep), d_model
 
-    def __repr__(self) -> str:
-        repr_str = "{}(".format(self.__class__.__name__)
+#     def __repr__(self) -> str:
+#         repr_str = "{}(".format(self.__class__.__name__)
 
-        repr_str += "\n\t Local representations"
-        if isinstance(self.local_rep, nn.Sequential):
-            for m in self.local_rep:
-                repr_str += "\n\t\t {}".format(m)
-        else:
-            repr_str += "\n\t\t {}".format(self.local_rep)
+#         repr_str += "\n\t Local representations"
+#         if isinstance(self.local_rep, nn.Sequential):
+#             for m in self.local_rep:
+#                 repr_str += "\n\t\t {}".format(m)
+#         else:
+#             repr_str += "\n\t\t {}".format(self.local_rep)
 
-        repr_str += "\n\t Global representations with patch size of {}x{}".format(
-            self.patch_h,
-            self.patch_w,
-        )
-        if isinstance(self.global_rep, nn.Sequential):
-            for m in self.global_rep:
-                repr_str += "\n\t\t {}".format(m)
-        else:
-            repr_str += "\n\t\t {}".format(self.global_rep)
+#         repr_str += "\n\t Global representations with patch size of {}x{}".format(
+#             self.patch_h,
+#             self.patch_w,
+#         )
+#         if isinstance(self.global_rep, nn.Sequential):
+#             for m in self.global_rep:
+#                 repr_str += "\n\t\t {}".format(m)
+#         else:
+#             repr_str += "\n\t\t {}".format(self.global_rep)
 
-        if isinstance(self.conv_proj, nn.Sequential):
-            for m in self.conv_proj:
-                repr_str += "\n\t\t {}".format(m)
-        else:
-            repr_str += "\n\t\t {}".format(self.conv_proj)
+#         if isinstance(self.conv_proj, nn.Sequential):
+#             for m in self.conv_proj:
+#                 repr_str += "\n\t\t {}".format(m)
+#         else:
+#             repr_str += "\n\t\t {}".format(self.conv_proj)
 
-        repr_str += "\n)"
-        return repr_str
+#         repr_str += "\n)"
+#         return repr_str
 
-    def unfolding_pytorch(self, feature_map: Tensor) -> Tuple[Tensor, Tuple[int, int]]:
+#     def unfolding_pytorch(self, feature_map: Tensor) -> Tuple[Tensor, Tuple[int, int]]:
 
-        batch_size, in_channels, img_h, img_w = feature_map.shape
+#         batch_size, in_channels, img_h, img_w = feature_map.shape
 
-        # [B, C, H, W] --> [B, C, P, N]
-        patches = F.unfold(
-            feature_map,
-            kernel_size=(self.patch_h, self.patch_w),
-            stride=(self.patch_h, self.patch_w),
-        )
-        patches = patches.reshape(
-            batch_size, in_channels, self.patch_h * self.patch_w, -1
-        )
+#         # [B, C, H, W] --> [B, C, P, N]
+#         patches = F.unfold(
+#             feature_map,
+#             kernel_size=(self.patch_h, self.patch_w),
+#             stride=(self.patch_h, self.patch_w),
+#         )
+#         patches = patches.reshape(
+#             batch_size, in_channels, self.patch_h * self.patch_w, -1
+#         )
 
-        return patches, (img_h, img_w)
+#         return patches, (img_h, img_w)
 
-    def folding_pytorch(self, patches: Tensor, output_size: Tuple[int, int]) -> Tensor:
-        batch_size, in_dim, patch_size, n_patches = patches.shape
+#     def folding_pytorch(self, patches: Tensor, output_size: Tuple[int, int]) -> Tensor:
+#         batch_size, in_dim, patch_size, n_patches = patches.shape
 
-        # [B, C, P, N]
-        patches = patches.reshape(batch_size, in_dim * patch_size, n_patches)
+#         # [B, C, P, N]
+#         patches = patches.reshape(batch_size, in_dim * patch_size, n_patches)
 
-        feature_map = F.fold(
-            patches,
-            output_size=output_size,
-            kernel_size=(self.patch_h, self.patch_w),
-            stride=(self.patch_h, self.patch_w),
-        )
+#         feature_map = F.fold(
+#             patches,
+#             output_size=output_size,
+#             kernel_size=(self.patch_h, self.patch_w),
+#             stride=(self.patch_h, self.patch_w),
+#         )
 
-        return feature_map
+#         return feature_map
 
-    def unfolding_coreml(self, feature_map: Tensor) -> Tuple[Tensor, Tuple[int, int]]:
-        # im2col is not implemented in Coreml, so here we hack its implementation using conv2d
-        # we compute the weights
+#     def unfolding_coreml(self, feature_map: Tensor) -> Tuple[Tensor, Tuple[int, int]]:
+#         # im2col is not implemented in Coreml, so here we hack its implementation using conv2d
+#         # we compute the weights
 
-        # [B, C, H, W] --> [B, C, P, N]
-        batch_size, in_channels, img_h, img_w = feature_map.shape
-        #
-        patches = F.conv2d(
-            feature_map,
-            self.unfolding_weights,
-            bias=None,
-            stride=(self.patch_h, self.patch_w),
-            padding=0,
-            dilation=1,
-            groups=in_channels,
-        )
-        patches = patches.reshape(
-            batch_size, in_channels, self.patch_h * self.patch_w, -1
-        )
-        return patches, (img_h, img_w)
+#         # [B, C, H, W] --> [B, C, P, N]
+#         batch_size, in_channels, img_h, img_w = feature_map.shape
+#         #
+#         patches = F.conv2d(
+#             feature_map,
+#             self.unfolding_weights,
+#             bias=None,
+#             stride=(self.patch_h, self.patch_w),
+#             padding=0,
+#             dilation=1,
+#             groups=in_channels,
+#         )
+#         patches = patches.reshape(
+#             batch_size, in_channels, self.patch_h * self.patch_w, -1
+#         )
+#         return patches, (img_h, img_w)
 
-    def folding_coreml(self, patches: Tensor, output_size: Tuple[int, int]) -> Tensor:
-        # col2im is not supported on coreml, so tracing fails
-        # We hack folding function via pixel_shuffle to enable coreml tracing
-        batch_size, in_dim, patch_size, n_patches = patches.shape
+#     def folding_coreml(self, patches: Tensor, output_size: Tuple[int, int]) -> Tensor:
+#         # col2im is not supported on coreml, so tracing fails
+#         # We hack folding function via pixel_shuffle to enable coreml tracing
+#         batch_size, in_dim, patch_size, n_patches = patches.shape
 
-        n_patches_h = output_size[0] // self.patch_h
-        n_patches_w = output_size[1] // self.patch_w
+#         n_patches_h = output_size[0] // self.patch_h
+#         n_patches_w = output_size[1] // self.patch_w
 
-        feature_map = patches.reshape(
-            batch_size, in_dim * self.patch_h * self.patch_w, n_patches_h, n_patches_w
-        )
-        assert (
-            self.patch_h == self.patch_w
-        ), "For Coreml, we need patch_h and patch_w are the same"
-        feature_map = F.pixel_shuffle(feature_map, upscale_factor=self.patch_h)
-        return feature_map
+#         feature_map = patches.reshape(
+#             batch_size, in_dim * self.patch_h * self.patch_w, n_patches_h, n_patches_w
+#         )
+#         assert (
+#             self.patch_h == self.patch_w
+#         ), "For Coreml, we need patch_h and patch_w are the same"
+#         feature_map = F.pixel_shuffle(feature_map, upscale_factor=self.patch_h)
+#         return feature_map
 
-    def resize_input_if_needed(self, x):
-        batch_size, in_channels, orig_h, orig_w = x.shape
-        if orig_h % self.patch_h != 0 or orig_w % self.patch_w != 0:
-            new_h = int(math.ceil(orig_h / self.patch_h) * self.patch_h)
-            new_w = int(math.ceil(orig_w / self.patch_w) * self.patch_w)
-            x = F.interpolate(
-                x, size=(new_h, new_w), mode="bilinear", align_corners=True
-            )
-        return x
+#     def resize_input_if_needed(self, x):
+#         batch_size, in_channels, orig_h, orig_w = x.shape
+#         if orig_h % self.patch_h != 0 or orig_w % self.patch_w != 0:
+#             new_h = int(math.ceil(orig_h / self.patch_h) * self.patch_h)
+#             new_w = int(math.ceil(orig_w / self.patch_w) * self.patch_w)
+#             x = F.interpolate(
+#                 x, size=(new_h, new_w), mode="bilinear", align_corners=True
+#             )
+#         return x
 
-    def forward_spatial(self, x: Tensor, *args, **kwargs) -> Tensor:
-        x = self.resize_input_if_needed(x)
+#     def forward_spatial(self, x: Tensor, *args, **kwargs) -> Tensor:
+#         x = self.resize_input_if_needed(x)
 
-        fm = self.local_rep(x)
+#         fm = self.local_rep(x)
 
-        # convert feature map to patches
-        if self.enable_coreml_compatible_fn:
-            patches, output_size = self.unfolding_coreml(fm)
-        else:
-            patches, output_size = self.unfolding_pytorch(fm)
+#         # convert feature map to patches
+#         if self.enable_coreml_compatible_fn:
+#             patches, output_size = self.unfolding_coreml(fm)
+#         else:
+#             patches, output_size = self.unfolding_pytorch(fm)
 
-        # learn global representations on all patches
-        patches = self.global_rep(patches)
+#         # learn global representations on all patches
+#         patches = self.global_rep(patches)
 
-        # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
-        if self.enable_coreml_compatible_fn:
-            fm = self.folding_coreml(patches=patches, output_size=output_size)
-        else:
-            fm = self.folding_pytorch(patches=patches, output_size=output_size)
-        fm = self.conv_proj(fm)
+#         # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
+#         if self.enable_coreml_compatible_fn:
+#             fm = self.folding_coreml(patches=patches, output_size=output_size)
+#         else:
+#             fm = self.folding_pytorch(patches=patches, output_size=output_size)
+#         fm = self.conv_proj(fm)
 
-        return fm
+#         return fm
 
-    def forward_temporal(
-        self, x: Tensor, x_prev: Tensor, *args, **kwargs
-    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-        x = self.resize_input_if_needed(x)
+#     def forward_temporal(
+#         self, x: Tensor, x_prev: Tensor, *args, **kwargs
+#     ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+#         x = self.resize_input_if_needed(x)
 
-        fm = self.local_rep(x)
+#         fm = self.local_rep(x)
 
-        # convert feature map to patches
-        if self.enable_coreml_compatible_fn:
-            patches, output_size = self.unfolding_coreml(fm)
-        else:
-            patches, output_size = self.unfolding_pytorch(fm)
+#         # convert feature map to patches
+#         if self.enable_coreml_compatible_fn:
+#             patches, output_size = self.unfolding_coreml(fm)
+#         else:
+#             patches, output_size = self.unfolding_pytorch(fm)
 
-        # learn global representations
-        for global_layer in self.global_rep:
-            if isinstance(global_layer, LinearAttnFFN):
-                patches = global_layer(x=patches, x_prev=x_prev)
-            else:
-                patches = global_layer(patches)
+#         # learn global representations
+#         for global_layer in self.global_rep:
+#             if isinstance(global_layer, LinearAttnFFN):
+#                 patches = global_layer(x=patches, x_prev=x_prev)
+#             else:
+#                 patches = global_layer(patches)
 
-        # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
-        if self.enable_coreml_compatible_fn:
-            fm = self.folding_coreml(patches=patches, output_size=output_size)
-        else:
-            fm = self.folding_pytorch(patches=patches, output_size=output_size)
-        fm = self.conv_proj(fm)
+#         # [B x Patch x Patches x C] --> [B x C x Patches x Patch]
+#         if self.enable_coreml_compatible_fn:
+#             fm = self.folding_coreml(patches=patches, output_size=output_size)
+#         else:
+#             fm = self.folding_pytorch(patches=patches, output_size=output_size)
+#         fm = self.conv_proj(fm)
 
-        return fm, patches
+#         return fm, patches
 
-    def forward(
-        self, x: Union[Tensor, Tuple[Tensor]], *args, **kwargs
-    ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
-        if isinstance(x, Tuple) and len(x) == 2:
-            # for spatio-temporal data (e.g., videos)
-            return self.forward_temporal(x=x[0], x_prev=x[1])
-        elif isinstance(x, Tensor):
-            # for image data
-            return self.forward_spatial(x)
-        else:
-            raise NotImplementedError
+#     def forward(
+#         self, x: Union[Tensor, Tuple[Tensor]], *args, **kwargs
+#     ) -> Union[Tensor, Tuple[Tensor, Tensor]]:
+#         if isinstance(x, Tuple) and len(x) == 2:
+#             # for spatio-temporal data (e.g., videos)
+#             return self.forward_temporal(x=x[0], x_prev=x[1])
+#         elif isinstance(x, Tensor):
+#             # for image data
+#             return self.forward_spatial(x)
+#         else:
+#             raise NotImplementedError
 
-    def profile_module(
-        self, input: Tensor, *args, **kwargs
-    ) -> Tuple[Tensor, float, float]:
-        params = macs = 0.0
-        input = self.resize_input_if_needed(input)
+#     def profile_module(
+#         self, input: Tensor, *args, **kwargs
+#     ) -> Tuple[Tensor, float, float]:
+#         params = macs = 0.0
+#         input = self.resize_input_if_needed(input)
 
-        res = input
-        out, p, m = module_profile(module=self.local_rep, x=input)
-        params += p
-        macs += m
+#         res = input
+#         out, p, m = module_profile(module=self.local_rep, x=input)
+#         params += p
+#         macs += m
 
-        patches, output_size = self.unfolding_pytorch(feature_map=out)
+#         patches, output_size = self.unfolding_pytorch(feature_map=out)
 
-        patches, p, m = module_profile(module=self.global_rep, x=patches)
-        params += p
-        macs += m
+#         patches, p, m = module_profile(module=self.global_rep, x=patches)
+#         params += p
+#         macs += m
 
-        fm = self.folding_pytorch(patches=patches, output_size=output_size)
+#         fm = self.folding_pytorch(patches=patches, output_size=output_size)
 
-        out, p, m = module_profile(module=self.conv_proj, x=fm)
-        params += p
-        macs += m
+#         out, p, m = module_profile(module=self.conv_proj, x=fm)
+#         params += p
+#         macs += m
 
-        return res, params, macs
+#         return res, params, macs

@@ -45,8 +45,8 @@ class MobileViT_Track(nn.Module):
         if self.aux_loss:
             self.box_head = _get_clones(self.box_head, 6)
 
-    def forward(self, template: torch.Tensor, search: torch.Tensor):
-        x, z = self.backbone(x=search, z=template)
+    def forward(self, template: torch.Tensor, search: torch.Tensor, train=True):
+        x, z = self.backbone(x=search, z=template, train=train)
 
         # Forward neck
         x, z = self.neck(x, z)

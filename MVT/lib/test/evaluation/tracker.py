@@ -8,6 +8,9 @@ import cv2 as cv
 from lib.utils.lmdb_utils import decode_img
 from pathlib import Path
 import numpy as np
+from tqdm import tqdm
+
+from lib.train.data.depth_frame_utils import get_rgbd_frame
 
 
 def trackerlist(name: str, parameter_name: str, dataset_name: str, run_ids = None, display_name: str = None,
@@ -63,7 +66,7 @@ class Tracker:
         tracker = self.tracker_class(params, self.dataset_name)
         return tracker
 
-    def run_sequence(self, seq, debug=None, dte=False):
+    def run_sequence(self, seq, debug=None):
         """Run tracker on sequence.
         args:
             seq: Sequence to run the tracker on.
@@ -84,10 +87,10 @@ class Tracker:
 
         tracker = self.create_tracker(params)
 
-        output = self._track_sequence(tracker, seq, init_info, dte=dte)
+        output = self._track_sequence(tracker, seq, init_info)
         return output
 
-    def _track_sequence(self, tracker, seq, init_info, dte=False):
+    def _track_sequence(self, tracker, seq, init_info):
         # Define outputs
         # Each field in output is a list containing tracker prediction for each frame.
 
@@ -115,10 +118,10 @@ class Tracker:
                     output[key].append(val)
 
         # Initialize
-        image = self._read_image(seq.frames[0])
-
+        image_rgbd = self._read_image(seq.frames[0])
+            
         start_time = time.time()
-        out = tracker.initialize(image, init_info)
+        out = tracker.initialize(image_rgbd, init_info)
         if out is None:
             out = {}
 
@@ -131,8 +134,8 @@ class Tracker:
 
         _store_outputs(out, init_default)
 
-        for frame_num, frame_path in enumerate(seq.frames[1:], start=1):
-            image = self._read_image(frame_path)
+        for frame_num, frame_path in tqdm(enumerate(seq.frames[1:], start=1), total=len(seq.frames)-1):
+            image_rgbd = self._read_image(frame_path)
 
             start_time = time.time()
 
@@ -141,7 +144,7 @@ class Tracker:
 
             if len(seq.ground_truth_rect) > 1:
                 info['gt_bbox'] = seq.ground_truth_rect[frame_num]
-            out = tracker.track(image, info)
+            out = tracker.track(image_rgbd, info)
             prev_output = OrderedDict(out)
             _store_outputs(out, {'time': time.time() - start_time})
 
@@ -306,5 +309,7 @@ class Tracker:
             return cv.cvtColor(im, cv.COLOR_BGR2RGB)
         elif isinstance(image_file, list) and len(image_file) == 2:
             return decode_img(image_file[0], image_file[1])
+        elif isinstance(image_file, dict):
+            return get_rgbd_frame(image_file['color'], image_file['depth'])
         else:
             raise ValueError("type of image_file should be str or list")
