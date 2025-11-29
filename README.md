@@ -6,6 +6,6 @@ moved output/, data/, pretrained_model/ to outside of MVT/
     * download depthtrack data with `scripts/download_depthtrack.sh`
 * `output/`
     * checkpoints, pretrained networks, tensorboard
-    * download pretrained mobilevit_s.pt with `scripts/download_pretrained_mobilevit.sh`
+    * download pretrained mobilevit_s.pt with `scripts/download_checkpoints.sh`
 * `DeT/`
     * run experiments with `scripts/train*.sh` and `scripts/test*.sh`
