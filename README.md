@@ -1,11 +1,9 @@
-moved output/, data/, pretrained_model/ to outside of MVT/
-
-`det-mvt/`  
-* `data/`  
+* `data/`
     * contains depthtrack dataset
     * download depthtrack data with `scripts/download_depthtrack.sh`
-* `output/`
-    * checkpoints, pretrained networks, tensorboard
-    * download pretrained mobilevit_s.pt with `scripts/download_checkpoints.sh`
-* `DeT/`
-    * run experiments with `scripts/train*.sh` and `scripts/test*.sh`
+* `det-mvt/`  
+   * `DeT/`
+       * run experiments with `scripts/train*.sh` and `scripts/test*.sh`
+   * `output/`
+       * checkpoints, pretrained networks, tensorboard
+       * download pretrained mobilevit_s.pt with `scripts/download_pretrained_mobilevit.sh`
