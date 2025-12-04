@@ -219,3 +219,5 @@ __marimo__/
 data/*
 outputs/*
 DeT/pytracking/networks/* 
+DeT/pytracking/VOT/results/*
+DeT/pytracking/VOT/sequences/*
