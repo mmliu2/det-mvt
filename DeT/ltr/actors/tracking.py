@@ -77,6 +77,9 @@ class DiMPActor(BaseActor):
 
 
 def kl_loss_raw_scores(student_logits, teacher_logits, T=4.0):
+    # student_logits: torch.Size([3, 5, 19, 19])
+    # teacher_logits: torch.Size([3, 5, 19, 19])
+    
     # soft targets
     log_p_s = F.log_softmax(student_logits / T, dim=-1)
     p_t = F.softmax(teacher_logits / T, dim=-1)
@@ -86,30 +89,8 @@ def kl_loss_raw_scores(student_logits, teacher_logits, T=4.0):
     return loss
 
 def contrastive_loss_raw_scores(student_logits, teacher_logits, temperature=0.1):
-    # B, T, H, W = student_logits.shape
-    # D = H * W
-
-    # # flatten spatial dims
-    # s = student_logits.view(B, T, D)
-    # t = teacher_logits.view(B, T, D)
-
-    # # normalize
-    # s = F.normalize(s, dim=-1)
-    # t = F.normalize(t, dim=-1)
-
-    # # merge time into batch
-    # s = s.reshape(B*T, D)
-    # t = t.reshape(B*T, D)
-
-    # # similarity matrix
-    # sim = (s @ t.T) / temperature
-
-    # # positives are diagonal
-    # labels = torch.arange(B*T).to(sim.device)
-
-    # return F.cross_entropy(sim, labels)
-    
-    # import pdb; pdb.set_trace()
+    # student_logits: torch.Size([3, 5, 19, 19])
+    # teacher_logits: torch.Size([3, 5, 19, 19])
 
     B, T, H, W = student_logits.shape
     D = T  # feature dimension (time) can be used, or 1 if not needed
@@ -133,9 +114,55 @@ def contrastive_loss_raw_scores(student_logits, teacher_logits, temperature=0.1)
     return loss
 
 
+def kl_loss_class_feats(student_feats, teacher_feats, T=4.0):
+    # student: torch.Size([15, 512, 18, 18])
+    # teacher: torch.Size([3, 5, 512, 324])
+
+    B_s, C_s, H_s, W_s = student_feats.shape
+    student_flat = student_feats.view(B_s, C_s, H_s * W_s)      # [15, 512, 324]
+
+    B_t, G_t, C_t, L_t = teacher_feats.shape
+    teacher_flat = teacher_feats.view(B_t * G_t, C_t, L_t)      # [15, 512, 324]
+
+    # soft targets
+    log_p_s = F.log_softmax(student_flat / T, dim=-1)
+    p_t = F.softmax(teacher_flat / T, dim=-1)
+
+    # KL divergence
+    loss = F.kl_div(log_p_s, p_t, reduction='batchmean') * (T * T)
+    return loss
+
+
+def contrastive_loss_class_feats(student_feats, teacher_feats, temperature=0.1):
+    # student: torch.Size([15, 512, 18, 18])
+    # teacher: torch.Size([3, 5, 512, 324])
+
+    B_t, G_t, C, L = teacher_feats.shape           # 3, 5, 512, 324
+    teacher_feats = teacher_feats.reshape(B_t * G_t, C, L)  # [15, 512, 324]
+    teacher_feats = teacher_feats.view(15, 512, 18, 18)     # [15, 512, 18, 18]
+
+    B, C, H, W = student_feats.shape               # 15, 512, 18, 18
+
+    s = student_feats.permute(0, 2, 3, 1).reshape(-1, C)   # [B*H*W, 512]
+    t = teacher_feats.permute(0, 2, 3, 1).reshape(-1, C)   # [B*H*W, 512]
+
+    s = F.normalize(s, dim=-1)
+    t = F.normalize(t, dim=-1)
+
+    sim = torch.matmul(s, t.T) / temperature
+
+    labels = torch.arange(s.shape[0], device=s.device)
+
+    loss = F.cross_entropy(sim, labels)
+    return loss
+
+
 class DiMPActorFeats(BaseActor):
     """Actor for training the DiMP network."""
-    def __init__(self, net, objective, loss_weight=None, kl_weight=0.001, contrastive_weight=0.001):
+    def __init__(self, net, objective, loss_weight=None, kl_raw_scores_weight=0, contrastive_raw_scores_weight=0,
+                                                         kl_class_feats_weight=0, contrastive_class_feats_weight=0):
+                                                        #  kl_raw_scores_weight=0.001, contrastive_raw_scores_weight=0.001,
+                                                        #  kl_class_feats_weight=25, contrastive_class_feats_weight=0.125):
         super().__init__(net, objective)
         if loss_weight is None:
             loss_weight = {'iou': 1.0, 'test_clf': 1.0}
@@ -143,8 +170,11 @@ class DiMPActorFeats(BaseActor):
 
         print('\nNum params:', sum(p.numel() for p in net.parameters()), '\n')
 
-        self.kl_weight = kl_weight
-        self.contrastive_weight = contrastive_weight
+        self.kl_raw_scores_weight = kl_raw_scores_weight
+        self.contrastive_raw_scores_weight = contrastive_raw_scores_weight
+
+        self.kl_class_feats_weight = kl_class_feats_weight
+        self.contrastive_class_feats_weight = contrastive_class_feats_weight
 
     def __call__(self, data):
         """
@@ -156,11 +186,19 @@ class DiMPActorFeats(BaseActor):
             loss    - the training loss
             stats  -  dict containing detailed losses
         """
+
+        # import pdb; pdb.set_trace()
+
         # Run network
-        target_scores, iou_pred = self.net(train_imgs=data['train_images'],
+        # target_scores, iou_pred = self.net(train_imgs=data['train_images'],
+                                        #    test_imgs=data['test_images'],
+                                        #    train_bb=data['train_anno'],
+                                        #    test_proposals=data['test_proposals'])
+        test_class_feats, target_scores, iou_pred = self.net(train_imgs=data['train_images'],
                                            test_imgs=data['test_images'],
                                            train_bb=data['train_anno'],
-                                           test_proposals=data['test_proposals'])
+                                           test_proposals=data['test_proposals'],
+                                           return_class_feats=True)
 
 
         # Classification losses for the different optimization iterations
@@ -190,8 +228,7 @@ class DiMPActorFeats(BaseActor):
         '''
         kl loss
         '''
-        # kl_losses_test = [self.object['kd_loss'](s, data['test_scores_raw']) for s in target_scores]
-        kl_losses_test = [kl_loss_raw_scores(s, data['test_scores_raw']) for s in target_scores]
+        kl_losses_test = [kl_loss_raw_scores(s, data['test_raw_scores']) for s in target_scores]
 
         # Loss of the final filter
         kl_loss_test = kl_losses_test[-1]
@@ -214,7 +251,7 @@ class DiMPActorFeats(BaseActor):
         '''
         contrastive loss
         '''
-        contrastive_losses_test = [contrastive_loss_raw_scores(s, data['test_scores_raw']) for s in target_scores]
+        contrastive_losses_test = [contrastive_loss_raw_scores(s, data['test_raw_scores']) for s in target_scores]
 
         # Loss of the final filter
         contrastive_loss_test = contrastive_losses_test[-1]
@@ -234,6 +271,18 @@ class DiMPActorFeats(BaseActor):
             else:
                 loss_test_iter_contrastive = (test_iter_weights / (len(contrastive_losses_test) - 2)) * sum(contrastive_losses_test[1:-1])
 
+
+        '''
+        kl loss class feats
+        '''
+        kl_loss_class_feats_test = kl_loss_class_feats(test_class_feats, data['test_class_feats'])
+
+        '''
+        contrastive loss class feats
+        '''
+        contrastive_loss_class_feats_test = contrastive_loss_class_feats(test_class_feats, data['test_class_feats'])
+
+        # import pdb; pdb.set_trace() 
         '''
         total loss
         '''
@@ -241,8 +290,11 @@ class DiMPActorFeats(BaseActor):
         # Total loss
         loss = loss_iou + \
                 loss_target_classifier + loss_test_init_clf + loss_test_iter_clf + \
-                self.kl_weight * (loss_target_kl + loss_test_init_kl + loss_test_iter_kl) + \
-                self.contrastive_weight * (loss_target_contrastive + loss_test_init_contrastive + loss_test_iter_contrastive)
+                self.kl_raw_scores_weight * (loss_target_kl + loss_test_init_kl + loss_test_iter_kl) + \
+                self.contrastive_raw_scores_weight * (loss_target_contrastive + loss_test_init_contrastive + loss_test_iter_contrastive) + \
+                self.kl_class_feats_weight * kl_loss_class_feats_test + \
+                self.contrastive_class_feats_weight * contrastive_loss_class_feats_test
+
 
         # Log stats
         stats = {'Loss/total': loss.item(),
@@ -259,12 +311,12 @@ class DiMPActorFeats(BaseActor):
                 stats['ClfTrain/test_iter_loss'] = sum(clf_losses_test[1:-1]).item() / (len(clf_losses_test) - 2)
 
         
-        stats['Distill/kl_weight'] = self.kl_weight
+        stats['Distill/kl_weight'] = self.kl_raw_scores_weight
         stats['Distill/target_kl'] = loss_target_kl.item()
         stats['Distill/test_init_kl'] = loss_test_init_kl.item()
         stats['Distill/test_iter_kl'] = loss_test_iter_kl.item()
 
-        stats['Distill/contrastive_weight'] = self.contrastive_weight
+        stats['Distill/contrastive_weight'] = self.contrastive_raw_scores_weight
         stats['Distill/target_contrastive'] = loss_target_contrastive.item()
         stats['Distill/test_init_contrastive'] = loss_test_init_contrastive.item()
         stats['Distill/test_iter_contrastive'] = loss_test_iter_contrastive.item()

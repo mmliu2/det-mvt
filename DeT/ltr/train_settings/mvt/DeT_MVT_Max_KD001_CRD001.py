@@ -117,7 +117,7 @@ def run(settings):
 
     loss_weight = {'iou': 1, 'test_clf': 100, 'test_init_clf': 100, 'test_iter_clf': 400}
 
-    actor = actors.DiMPActorFeats(net=net, objective=objective, loss_weight=loss_weight, kl_weight=0.001, contrastive_weight=0.001)
+    actor = actors.DiMPActorFeats(net=net, objective=objective, loss_weight=loss_weight, kl_raw_scores_weight=0.001, contrastive_raw_scores_weight=0.001)
 
     # Optimizer
     optimizer = optim.Adam([{'params': actor.net.classifier.filter_initializer.parameters(), 'lr': 5e-5},

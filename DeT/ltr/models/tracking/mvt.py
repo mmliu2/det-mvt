@@ -100,7 +100,7 @@ class MVT_DeT(nn.Module):
 
         # self.id = 1
 
-    def forward(self, train_imgs, test_imgs, train_bb, test_proposals, *args, **kwargs):
+    def forward(self, train_imgs, test_imgs, train_bb, test_proposals, return_class_feats=False, *args, **kwargs):
         """Runs the MVT network the way it is applied during training.
         The forward function is ONLY used for training. Call the individual functions during tracking.
         args:
@@ -135,6 +135,10 @@ class MVT_DeT(nn.Module):
         # Run the IoUNet module
         iou_pred = self.bb_regressor(train_feat_iou, test_feat_iou, train_bb, test_proposals)
 
+        if return_class_feats:
+            test_class_feats = self.extract_classification_feat(test_feat)
+            return test_class_feats, target_scores, iou_pred
+        
         return target_scores, iou_pred
 
     def get_backbone_clf_feat(self, backbone_feat):

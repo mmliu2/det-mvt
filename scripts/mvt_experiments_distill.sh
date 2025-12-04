@@ -1,16 +1,16 @@
 # #!/bin/bash
 
 cd DeT/ltr
-python run_training.py mvt DeT_MVT_Max_KD001
+# python run_training.py mvt DeT_MVT_Max_KD001
 # python run_training.py mvt DeT_MVT_Max_KD002
 # python run_training.py mvt DeT_MVT_Max_CRD001
 # python run_training.py mvt DeT_MVT_Max_CRD002
 # python run_training.py mvt DeT_MVT_Max_KD001_CRD001
 python run_training.py mvt DeT_MVT_Max_cf_KD001
-# python run_training.py mvt DeT_MVT_Max_cf_KD002
-# python run_training.py mvt DeT_MVT_Max_cf_CRD001
-# python run_training.py mvt DeT_MVT_Max_cf_CRD002
-# python run_training.py mvt DeT_MVT_Max_KD001_cf_CRD001
+python run_training.py mvt DeT_MVT_Max_cf_KD002
+python run_training.py mvt DeT_MVT_Max_cf_CRD001
+python run_training.py mvt DeT_MVT_Max_cf_CRD002
+python run_training.py mvt DeT_MVT_Max_KD001_cf_CRD001
 ### python run_training.py mvt DeT_MVT_Max_KD002_CRD002 # skip
 # baselines
 # python run_training.py mvt DeT_MVT_Max

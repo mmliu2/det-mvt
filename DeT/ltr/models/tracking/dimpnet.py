@@ -71,7 +71,7 @@ class DiMPnet_DeT(nn.Module):
 
         # Run the IoUNet module
         iou_pred = self.bb_regressor(train_feat_iou, test_feat_iou, train_bb, test_proposals)
-
+        import pdb;pdb.set_trace()
         return target_scores, iou_pred
 
     def get_backbone_clf_feat(self, backbone_feat):
