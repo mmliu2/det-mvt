@@ -129,7 +129,7 @@ class DiMP(BaseTracker):
                 os.makedirs(save_dir)
             save_path = os.path.join(save_dir, f'{self.frame_num:08d}.npz')
             # np.savez_compressed(save_path, test_x.cpu().numpy())
-            np.savez_compressed(save_path, test_x.half().numpy())
+            np.savez_compressed(save_path, test_x.half().cpu().numpy())
 
         # Location of sample
         sample_pos, sample_scales = self.get_sample_location(sample_coords)
