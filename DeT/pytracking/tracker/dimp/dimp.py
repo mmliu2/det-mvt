@@ -94,6 +94,15 @@ class DiMP(BaseTracker):
         out = {'time': time.time() - tic}
         return out
 
+    # # TODO; reducing size 
+    # def conv_compress(self, x):
+    #     proj = torch.nn.Conv2d(512, 128, kernel_size=1, bias=False).to(x.device)
+
+    #     with torch.no_grad():
+    #         y = proj(x).half()
+
+    #     return y
+    
 
     def track(self, image, info: dict = None, save_features=False) -> dict:
         self.debug_info = {}
@@ -114,13 +123,13 @@ class DiMP(BaseTracker):
         
         # Extract classification features
         test_x = self.get_classification_features(backbone_feat)
-        # if save_features: # not enough space
-        #     import pdb; pdb.set_trace()
-        #     save_dir = os.path.join(save_features, 'class_feats/')
-        #     if not os.path.exists(save_dir):
-        #         os.makedirs(save_dir)
-        #     save_path = os.path.join(save_dir, f'{self.frame_num:08d}.npz')
-        #     np.savez_compressed(save_path, test_x.cpu().numpy())
+        if save_features: 
+            save_dir = os.path.join(save_features, 'class_feats/')
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            save_path = os.path.join(save_dir, f'{self.frame_num:08d}.npz')
+            # np.savez_compressed(save_path, test_x.cpu().numpy())
+            np.savez_compressed(save_path, test_x.half().numpy())
 
         # Location of sample
         sample_pos, sample_scales = self.get_sample_location(sample_coords)
@@ -128,13 +137,14 @@ class DiMP(BaseTracker):
         # Compute classification scores
         scores_raw = self.classify_target(test_x)
 
-        if save_features:
-            # import pdb; pdb.set_trace()
-            save_dir = os.path.join(save_features, 'scores_raw/')
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir)
-            save_path = os.path.join(save_dir, f'{self.frame_num:08d}.npz')
-            np.savez_compressed(save_path, scores_raw.cpu().numpy())
+        # skipping, already collected
+        # if save_features:
+        #     # import pdb; pdb.set_trace()
+        #     save_dir = os.path.join(save_features, 'scores_raw/')
+        #     if not os.path.exists(save_dir):
+        #         os.makedirs(save_dir)
+        #     save_path = os.path.join(save_dir, f'{self.frame_num:08d}.npz')
+        #     np.savez_compressed(save_path, scores_raw.cpu().numpy())
 
         # Localize the target
         translation_vec, scale_ind, s, flag = self.localize_target(scores_raw, sample_pos, sample_scales)

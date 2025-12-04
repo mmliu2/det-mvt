@@ -76,7 +76,7 @@ class DiMPActor(BaseActor):
         return loss, stats
 
 
-def kl_loss(student_logits, teacher_logits, T=4.0):
+def kl_loss_raw_scores(student_logits, teacher_logits, T=4.0):
     # soft targets
     log_p_s = F.log_softmax(student_logits / T, dim=-1)
     p_t = F.softmax(teacher_logits / T, dim=-1)
@@ -85,7 +85,7 @@ def kl_loss(student_logits, teacher_logits, T=4.0):
     loss = F.kl_div(log_p_s, p_t, reduction='batchmean') * (T * T)
     return loss
 
-def contrastive_loss(student_logits, teacher_logits, temperature=0.1):
+def contrastive_loss_raw_scores(student_logits, teacher_logits, temperature=0.1):
     # B, T, H, W = student_logits.shape
     # D = H * W
 
@@ -133,7 +133,6 @@ def contrastive_loss(student_logits, teacher_logits, temperature=0.1):
     return loss
 
 
-# KL loss
 class DiMPActorFeats(BaseActor):
     """Actor for training the DiMP network."""
     def __init__(self, net, objective, loss_weight=None, kl_weight=0.001, contrastive_weight=0.001):
@@ -192,7 +191,7 @@ class DiMPActorFeats(BaseActor):
         kl loss
         '''
         # kl_losses_test = [self.object['kd_loss'](s, data['test_scores_raw']) for s in target_scores]
-        kl_losses_test = [kl_loss(s, data['test_scores_raw']) for s in target_scores]
+        kl_losses_test = [kl_loss_raw_scores(s, data['test_scores_raw']) for s in target_scores]
 
         # Loss of the final filter
         kl_loss_test = kl_losses_test[-1]
@@ -215,7 +214,7 @@ class DiMPActorFeats(BaseActor):
         '''
         contrastive loss
         '''
-        contrastive_losses_test = [contrastive_loss(s, data['test_scores_raw']) for s in target_scores]
+        contrastive_losses_test = [contrastive_loss_raw_scores(s, data['test_scores_raw']) for s in target_scores]
 
         # Loss of the final filter
         contrastive_loss_test = contrastive_losses_test[-1]

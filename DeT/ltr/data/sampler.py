@@ -323,8 +323,8 @@ class TrackingSamplerFeats(torch.utils.data.Dataset):
             train_frame_ids = [1] * self.num_train_frames
             test_frame_ids = [1] * self.num_test_frames
 
-        _, train_frames, train_anno, meta_obj_train = dataset.get_frames(seq_id, train_frame_ids, seq_info_dict)
-        test_scores_raw, test_frames, test_anno, meta_obj_test = dataset.get_frames(seq_id, test_frame_ids, seq_info_dict)
+        _, _, train_frames, train_anno, meta_obj_train = dataset.get_frames(seq_id, train_frame_ids, seq_info_dict)
+        test_class_feats, test_raw_scores, test_frames, test_anno, meta_obj_test = dataset.get_frames(seq_id, test_frame_ids, seq_info_dict)
 
         data = TensorDict({'train_images': train_frames,
                            'train_anno': train_anno['bbox'],
@@ -332,7 +332,11 @@ class TrackingSamplerFeats(torch.utils.data.Dataset):
                            'test_anno': test_anno['bbox'],
                            'dataset': dataset.get_name(),
                            'test_class': meta_obj_test.get('object_class_name'),
-                           'test_scores_raw': test_scores_raw,})
+
+                           'test_raw_scores': test_raw_scores,
+                           'test_class_feats': test_class_feats,
+                           
+                           })
 
         return self.processing(data)
 

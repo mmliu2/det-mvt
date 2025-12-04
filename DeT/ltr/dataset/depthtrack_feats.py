@@ -143,11 +143,20 @@ class DepthTrackFeats(BaseVideoDataset):
         return os.path.join(seq_path, 'color', '{:08}.jpg'.format(frame_id+1)), \
                 os.path.join(seq_path, 'depth', '{:08}.png'.format(frame_id+1))
     
-    def _get_score_path(self, seq_path, frame_id):
+    def _get_class_feats_path(self, seq_path, frame_id):
         '''
         return depth image path
         '''
         # frames start from 1
+
+        return os.path.join(seq_path, 'class_feats', '{:08}.npz'.format(frame_id+1))
+    
+    def _get_raw_scores_path(self, seq_path, frame_id):
+        '''
+        return depth image path
+        '''
+        # frames start from 1
+
         return os.path.join(seq_path, 'scores_raw', '{:08}.npz'.format(frame_id+1))
 
     def _get_frame(self, seq_path, frame_id):
@@ -165,7 +174,7 @@ class DepthTrackFeats(BaseVideoDataset):
 
         return img
     
-    def _get_scores(self, seq_path, frame_id):
+    def _get_class_feats(self, seq_path, frame_id):
         '''
         Return :
             - colormap from depth image
@@ -175,13 +184,32 @@ class DepthTrackFeats(BaseVideoDataset):
             - color
             - raw_depth
         '''
-        score_path = self._get_score_path(seq_path, frame_id)
-        if os.path.exists(score_path):
-            scores = np.load(score_path)['arr_0'][0, 0, :, :]
+        class_feat_path = self._get_class_feats_path(seq_path, frame_id)
+        if os.path.exists(class_feat_path):
+            class_feats = np.load(class_feat_path)['arr_0'][0, :, :, :].astype(np.float32)
+            class_feats = class_feats.reshape(class_feats.shape[0], -1)
         else:
-            scores = None # frame 1
+            class_feats = None # frame 1
 
-        return scores
+        return class_feats
+
+    def _get_raw_scores(self, seq_path, frame_id):
+        '''
+        Return :
+            - colormap from depth image
+            - 3xD = [depth, depth, depth], 255
+            - rgbcolormap
+            - rgb3d
+            - color
+            - raw_depth
+        '''
+        raw_score_path = self._get_raw_scores_path(seq_path, frame_id)
+        if os.path.exists(raw_score_path):
+            raw_scores = np.load(raw_score_path)['arr_0'][0, 0, :, :].astype(np.float32)
+        else:
+            raw_scores = None # frame 1
+
+        return raw_scores
 
     def _get_class(self, seq_path):
         raw_class = seq_path.split('/')[-2]
@@ -207,7 +235,8 @@ class DepthTrackFeats(BaseVideoDataset):
             anno_frames[key] = [value[f_id, ...].clone() for ii, f_id in enumerate(frame_ids)]
 
         frame_list = [self._get_frame(depth_path, f_id) for ii, f_id in enumerate(frame_ids)]
-        score_list = [self._get_scores(depth_path, f_id) for ii, f_id in enumerate(frame_ids)]
+        class_feats_list = [self._get_class_feats(depth_path, f_id) for ii, f_id in enumerate(frame_ids)]
+        raw_scores_list = [self._get_raw_scores(depth_path, f_id) for ii, f_id in enumerate(frame_ids)]
 
         object_meta = OrderedDict({'object_class_name': obj_class,
                                    'motion_class': None,
@@ -215,4 +244,4 @@ class DepthTrackFeats(BaseVideoDataset):
                                    'root_class': None,
                                    'motion_adverb': None})
 
-        return score_list, frame_list, anno_frames, object_meta
+        return class_feats_list, raw_scores_list, frame_list, anno_frames, object_meta

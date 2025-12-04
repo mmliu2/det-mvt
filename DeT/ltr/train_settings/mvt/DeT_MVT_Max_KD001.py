@@ -13,7 +13,7 @@ from ltr import MultiGPU
 def run(settings):
     settings.description = 'Default train settings for MVT with MobileViT as backbone.'
     settings.batch_size = 5 # 10
-    settings.num_workers = 0 # 8
+    settings.num_workers = 4 # 8
     settings.multi_gpu = False
     settings.print_interval = 10
     settings.normalize_mean = [0.485, 0.456, 0.406]
