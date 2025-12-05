@@ -13,7 +13,7 @@ from ltr import MultiGPU
 def run(settings):
     settings.description = 'Default train settings for MVT with MobileViT as backbone.'
     settings.batch_size = 5 # 10
-    settings.num_workers = 0 # 8
+    settings.num_workers = 4 # 8
     settings.multi_gpu = False
     settings.print_interval = 10
     settings.normalize_mean = [0.485, 0.456, 0.406]
@@ -117,7 +117,7 @@ def run(settings):
 
     loss_weight = {'iou': 1, 'test_clf': 100, 'test_init_clf': 100, 'test_iter_clf': 400}
 
-    actor = actors.DiMPActorFeats(net=net, objective=objective, loss_weight=loss_weight, kl_class_feats_weight=50, contrastive_class_feats_weight=0)
+    actor = actors.DiMPActorFeats(net=net, objective=objective, loss_weight=loss_weight, kl_class_feats_weight=12.5, contrastive_class_feats_weight=0)
 
     # Optimizer
     optimizer = optim.Adam([{'params': actor.net.classifier.filter_initializer.parameters(), 'lr': 5e-5},

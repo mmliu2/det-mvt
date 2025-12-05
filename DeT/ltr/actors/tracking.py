@@ -321,6 +321,11 @@ class DiMPActorFeats(BaseActor):
         stats['Distill/test_init_contrastive'] = loss_test_init_contrastive.item()
         stats['Distill/test_iter_contrastive'] = loss_test_iter_contrastive.item()
 
+        stats['Distill/cf_kl_weight'] = self.kl_class_feats_weight
+        stats['Distill/cf_contrastive_weight'] = self.contrastive_class_feats_weight
+        stats['Distill/cf_test_kl'] = kl_loss_class_feats_test.item()
+        stats['Distill/cf_test_contrastive'] = contrastive_loss_class_feats_test.item()
+
         return loss, stats
 
 
